@@ -1,0 +1,138 @@
+name: Market Alarm
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "실행 작업"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, finra, korea, us, crypto, month-end, monthly]
+      force_alert:
+        description: "상태가 같아도 Telegram 전송"
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    # GitHub cron은 UTC. KST = UTC+9.
+    - cron: "30 9 * * 1-5"       # 평일 18:30 KST: 한국
+    - cron: "0 23 * * *"         # 매일 08:00 KST: 미국 전일 종가
+    - cron: "5 3,7,11,15,19,23 * * *"  # KST 00:05/04:05/...: 코인
+    - cron: "0 6 15-25 * *"      # 매월 15~25일 15:00 KST: FINRA
+    - cron: "50 14 28-31 * *"    # 23:50 KST: 코드에서 실제 월말만 실행
+    - cron: "0 0 1 * *"          # 매월 1일 09:00 KST: 전체 상태보고
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-alarm-database
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+      KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      FREESIS_DOWNLOAD_URL: ${{ secrets.FREESIS_DOWNLOAD_URL }}
+      FREESIS_DOWNLOAD_METHOD: ${{ vars.FREESIS_DOWNLOAD_METHOD }}
+      FREESIS_DOWNLOAD_PAYLOAD_JSON: ${{ secrets.FREESIS_DOWNLOAD_PAYLOAD_JSON }}
+      FREESIS_USE_PLAYWRIGHT: "false"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Verify repository layout
+        shell: bash
+        run: |
+          test -f pyproject.toml || {
+            echo "::error::pyproject.toml이 저장소 최상단에 없습니다. ZIP 안쪽의 market-alarm 폴더가 아니라 그 안의 파일들을 최상단에 올려야 합니다."
+            exit 1
+          }
+          test -f src/market_alarm/cli.py || {
+            echo "::error::src/market_alarm/cli.py가 없습니다. 저장소 폴더 구조가 잘못되었습니다."
+            exit 1
+          }
+          test -f .github/workflows/monitor.yml || {
+            echo "::error::.github/workflows/monitor.yml이 없습니다."
+            exit 1
+          }
+          echo "Repository layout: OK"
+
+      - name: Select task
+        id: select
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            task="${{ inputs.task }}"
+          else
+            case "${{ github.event.schedule }}" in
+              "30 9 * * 1-5") task="korea" ;;
+              "0 23 * * *") task="us" ;;
+              "5 3,7,11,15,19,23 * * *") task="crypto" ;;
+              "0 6 15-25 * *") task="finra" ;;
+              "50 14 28-31 * *") task="month-end" ;;
+              "0 0 1 * *") task="monthly" ;;
+              *) echo "Unknown schedule"; exit 1 ;;
+            esac
+          fi
+          echo "task=$task" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        run: python -m pip install -e ".[test]"
+
+      - name: Check configuration and Secrets
+        run: market-alarm doctor --strict
+
+      - name: Test Telegram connection
+        if: github.event_name == 'workflow_dispatch'
+        run: market-alarm test-telegram
+
+      - name: Run monitor
+        id: monitor
+        shell: bash
+        run: |
+          force=""
+          if [[ "${{ inputs.force_alert }}" == "true" ]]; then force="--force-alert"; fi
+          result="$(market-alarm run "${{ steps.select.outputs.task }}" $force)"
+          echo "$result"
+          {
+            echo "## Market Alarm 실행 결과"
+            echo
+            echo "- 버전: v1.8.0"
+            echo "- 작업: ${{ steps.select.outputs.task }}"
+            echo "- 강제 알림: ${{ inputs.force_alert || false }}"
+            echo
+            echo '```json'
+            echo "$result"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Persist public market data and state
+        shell: bash
+        run: |
+          git config user.name "market-alarm-bot"
+          git config user.email "market-alarm-bot@users.noreply.github.com"
+          git add data/market_alarm.sqlite3
+          if git diff --cached --quiet; then
+            echo "No database changes"
+          else
+            git commit -m "data: update ${{ steps.select.outputs.task }} [skip ci]"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
