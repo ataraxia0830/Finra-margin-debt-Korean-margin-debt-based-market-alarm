@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "market-alarm"
+version = "1.8.0"
+description = "FINRA, KOFIA FreeSIS, KIS and Binance market signal monitor"
+requires-python = ">=3.11"
+dependencies = [
+  "beautifulsoup4>=4.12,<5",
+  "lxml>=5,<7",
+  "openpyxl>=3.1,<4",
+  "pandas>=2.2,<3",
+  "python-dateutil>=2.9,<3",
+  "python-dotenv>=1.0,<2",
+  "PyYAML>=6,<7",
+  "requests>=2.32,<3",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.48,<2"]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+market-alarm = "market_alarm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

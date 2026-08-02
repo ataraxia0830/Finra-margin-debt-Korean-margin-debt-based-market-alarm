@@ -1,0 +1,117 @@
+timezone: Asia/Seoul
+database: data/market_alarm.sqlite3
+
+http:
+  timeout_seconds: 30
+  retries: 3
+  user_agent: "market-alarm/1.0 (+personal research monitor)"
+
+finra:
+  page_url: "https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics"
+  excel_url: "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx"
+  overheat_yoy: 50
+  lookback_months: 48
+  sideways_buy_warning_yoy: -10
+  sideways_buy_strong_yoy: -15
+  buy_warning_yoy: -25
+  buy_strong_yoy: -30
+  balance_drawdown_alert_levels: [-20, -25, -30]
+  sell_warning_relative_drop: -10
+  sell_strong_relative_drop: -15
+
+freesis:
+  page_url: "https://freesis.kofia.or.kr/stat/FreeSIS.do?parentDivId=MSIS10000000000000&serviceId=STATSCU0100000070"
+  api_base_url: "https://freesis.kofia.or.kr"
+  history_start_month: "201001"
+  bootstrap_files:
+    - "bootstrap/freesis_credit.csv"
+    - "bootstrap/freesis_credit.xlsx"
+  overheat_yoy: 60
+  buy_warning_yoy: -25
+  buy_strong_yoy: -30
+  balance_drawdown_min: -30
+  sell_relative_drop: -15
+  prior_crash_cutoff: -45
+  prior_crash_lookback_months: 18
+
+kis:
+  base_url: "https://openapi.koreainvestment.com:9443"
+  domestic:
+    "005930":
+      name: "삼성전자"
+      buy_ma200_gap: -25
+      buy_credit_drawdown: -30
+      sell_ma120_warning: 25
+      sell_ma120_strong: 30
+      sell_credit_percentile: 90
+    "000660":
+      name: "SK하이닉스"
+      buy_ma200_gap: -30
+      buy_credit_drawdown: -35
+      sell_ma120_warning: 35
+      sell_ma120_strong: 40
+      sell_credit_percentile: 90
+  overseas:
+    GOOGL: {name: "Alphabet", exchange: NAS, buy_ma200_gap: -25, sell_ma120_warning: 25, sell_ma120_strong: 30}
+    AMZN:  {name: "Amazon", exchange: NAS, buy_ma200_gap: -25, sell_ma120_warning: 25, sell_ma120_strong: 30}
+    NVDA:  {name: "NVIDIA", exchange: NAS, buy_ma200_gap: -30, sell_ma120_warning: 35, sell_ma120_strong: 40}
+    AVGO:  {name: "Broadcom", exchange: NAS, buy_ma200_gap: -30, sell_ma120_warning: 35, sell_ma120_strong: 40}
+    TSM:   {name: "TSMC", exchange: NYS, buy_ma200_gap: -30, sell_ma120_warning: 35, sell_ma120_strong: 40}
+    ASML:  {name: "ASML", exchange: NAS, buy_ma200_gap: -30, sell_ma120_warning: 35, sell_ma120_strong: 40}
+    LRCX:  {name: "Lam Research", exchange: NAS, buy_ma200_gap: -30, sell_ma120_warning: 35, sell_ma120_strong: 40}
+    KLAC:  {name: "KLA", exchange: NAS, buy_ma200_gap: -30, sell_ma120_warning: 35, sell_ma120_strong: 40}
+
+binance:
+  spot_base_url: "https://data-api.binance.vision"
+  futures_base_url: "https://fapi.binance.com"
+  archive_base_url: "https://data.binance.vision"
+  archive_backfill_days: 190
+  archive_workers: 12
+  delivery_base_url: "https://dapi.binance.com"
+  symbols:
+    BTCUSDT:
+      name: "BTC"
+      sell_cycle_high_date: "2021-11-10"
+      buy_months_min: 12
+      buy_months_max: 14
+      buy_opportunity_price_drawdown: -60
+      buy_price_drawdown: -70
+      buy_oi_drawdown: -50
+      buy_oi_strong_drawdown: -60
+    SOLUSDT:
+      name: "SOL"
+      sell_cycle_high_date: "2021-11-06"
+      buy_months_min: 10
+      buy_months_max: 14
+      buy_opportunity_price_drawdown: -80
+      buy_price_drawdown: -85
+      buy_oi_drawdown: -60
+      buy_oi_strong_drawdown: -70
+  derivative_min_count: 2
+  sell_observe_month: 42
+  sell_watch_month: 45
+  sell_core_end_month: 51
+  sell_price_ma120_percentile: 90
+  sell_price_lookback_days: 1095
+  sell_hot_lookback_days: 1095
+  sell_min_derivative_history_days: 180
+  sell_recent_hot_days: 30
+  sell_reversal_lookback_days: 180
+  overheat:
+    oi_percentile: 90
+    oi_180d_growth_percent: 100
+    funding_percentile: 90
+    basis_percentile: 90
+  reversal:
+    btc_oi_drawdown: -10
+    sol_oi_drawdown: -15
+    funding_drawdown: -30
+    basis_drawdown: -25
+    btc_price_drawdown: -12
+    sol_price_drawdown: -15
+    solbtc_drawdown: -10
+    near_high_drawdown: -10
+
+alerts:
+  only_on_state_change: true
+  telegram_max_chars: 3900

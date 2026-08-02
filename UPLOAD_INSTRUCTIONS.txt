@@ -1,0 +1,18 @@
+Market Alarm v1.8 업로드 확인
+
+1. 이 ZIP을 압축 해제합니다.
+2. 압축을 푼 폴더 안의 내용물 전체를 GitHub 저장소 최상단에 올립니다.
+3. GitHub 저장소 첫 화면에서 아래 세 항목이 같은 깊이에 보여야 합니다.
+   - pyproject.toml
+   - src
+   - .github
+4. market-alarm/pyproject.toml처럼 한 단계 안쪽에 보이면 잘못 올린 것입니다.
+5. Actions > Market Alarm > Run workflow에서 task=all로 실행합니다.
+6. force_alert는 기본 true 그대로 둡니다.
+7. Telegram에서 먼저 아래 점검 메시지가 와야 합니다.
+   [시장 알람 시스템 점검]
+   Telegram 연결: 정상
+   버전: v1.8.0
+
+Node.js 20 경고가 보이면 GitHub가 아직 예전 monitor.yml을 실행하는 것입니다.
+새 파일은 actions/checkout@v5와 actions/setup-python@v6을 사용합니다.
