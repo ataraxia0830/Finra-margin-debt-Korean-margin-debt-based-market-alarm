@@ -27,6 +27,8 @@ freesis:
     - "bootstrap/freesis_credit.csv"
     - "bootstrap/freesis_credit.xlsx"
   overheat_yoy: 60
+  # 직전 고점(선행 최고 YoY)을 찾는 창.  FINRA와 동일하게 48개월을 쓴다.
+  lookback_months: 48
   buy_warning_yoy: -25
   buy_strong_yoy: -30
   balance_drawdown_min: -30
