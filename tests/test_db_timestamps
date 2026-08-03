@@ -1,0 +1,72 @@
+import pandas as pd
+import pytest
+
+from market_alarm.db import Store
+
+
+def _store(tmp_path):
+    return Store(str(tmp_path / "market.sqlite"))
+
+
+def test_mixed_precision_timestamps_do_not_become_nat(tmp_path):
+    """Binance mixes exact-second and millisecond timestamps in one series."""
+    store = _store(tmp_path)
+    store.upsert_points(
+        "binance",
+        "funding_rate",
+        [
+            ("2024-01-01T00:00:00+00:00", 0.0001, None),
+            ("2024-01-01T08:00:00.008000+00:00", 0.0002, None),
+            ("2024-01-01T16:00:00+00:00", 0.0003, None),
+            ("2024-01-02T00:00:00.123456+00:00", 0.0004, None),
+        ],
+        symbol="BTCUSDT",
+    )
+    frame = store.frame("binance", "funding_rate", "BTCUSDT")
+    assert len(frame) == 4
+    assert not frame.index.isna().any()
+    assert frame.index.is_monotonic_increasing
+    # This is the call that raised "index values must not have NaT".
+    assert not frame["value"].rolling("7D", min_periods=1).mean().isna().any()
+
+
+def test_corrupt_timestamp_rows_are_purged_on_open(tmp_path):
+    path = tmp_path / "market.sqlite"
+    store = Store(str(path))
+    store.upsert_points(
+        "binance",
+        "funding_rate",
+        [
+            ("2024-01-01T00:00:00+00:00", 0.0001, None),
+            ("NaT", 0.0002, None),
+        ],
+        symbol="BTCUSDT",
+    )
+    reopened = Store(str(path))
+    frame = reopened.frame("binance", "funding_rate", "BTCUSDT")
+    assert len(frame) == 1
+    assert not frame.index.isna().any()
+
+
+def test_frame_of_unknown_series_is_empty(tmp_path):
+    frame = _store(tmp_path).frame("binance", "funding_rate", "NOPE")
+    assert frame.empty
+    assert list(frame.columns) == ["value", "meta"]
+
+
+def test_binance_store_skips_nat_index():
+    from market_alarm.collectors import binance
+
+    captured = {}
+
+    class FakeStore:
+        def upsert_points(self, source, series, rows, symbol=""):
+            captured["rows"] = rows
+            return len(rows)
+
+    values = pd.Series(
+        [1.0, 2.0],
+        index=pd.DatetimeIndex([pd.Timestamp("2024-01-01T00:00:00+00:00"), pd.NaT]),
+    )
+    binance._store(FakeStore(), "binance", "funding_rate", "BTCUSDT", values)
+    assert [row[0] for row in captured["rows"]] == ["2024-01-01T00:00:00+00:00"]
