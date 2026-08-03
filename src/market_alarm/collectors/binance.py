@@ -554,8 +554,15 @@ def _perpetual_basis_fallback(fallback: pd.DataFrame) -> pd.DataFrame:
 
 
 def _store(store: Store, source: str, series: str, symbol: str, values: pd.Series) -> None:
+    # ``pd.Timestamp(NaT).isoformat()`` returns the literal string "NaT", which
+    # SQLite happily accepts and no later read can parse back into a timestamp.
+    # One such row poisons the whole series: it becomes a NaT in the index and
+    # every time-based ``rolling`` window then raises
+    # "ValueError: index values must not have NaT".  Drop unusable timestamps
+    # at the write boundary instead.
     rows = [
         (pd.Timestamp(idx).isoformat(), float(value), None)
         for idx, value in values.dropna().items()
+        if not pd.isna(idx)
     ]
     store.upsert_points(source, series, rows, symbol=symbol)
