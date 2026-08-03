@@ -27,6 +27,11 @@ class Monitor:
         self.store = Store(config["_database_path"])
         self.telegram = Telegram(config)
         self.force_alert = force_alert
+        # Guards against the same alert key being rendered and pushed twice in a
+        # single invocation.  ``--force-alert`` bypasses the state-change check,
+        # so without this a shared assessment reached from two steps would send
+        # two identical Telegram messages.
+        self._sent_keys: set[str] = set()
 
     def run(self, task: str) -> str:
         run_id = self.store.start_run(task)
@@ -57,8 +62,13 @@ class Monitor:
                 pass
             raise
 
-    def run_finra(self, collect: bool) -> str:
+    def run_finra(self, collect: bool, notify: bool = True) -> str:
         info = finra.collect(self.config, self.store) if collect else {}
+        if not notify:
+            # `all`에서는 FINRA 수집만 담당하고, 미국 알림은 해외 종가까지 갱신한
+            # 뒤 `us` 단계가 한 번만 보낸다.  여기서 상태를 기록하면 `us` 단계의
+            # 상태변화 판정이 소모되므로 판정도 보류한다.
+            return json.dumps({"collector": info, "state": "DEFERRED"}, ensure_ascii=False)
         assessment, stocks = self._finra_assessment()
         message = render_finra(assessment, stocks)
         # 신규 월이 없으면 상태가 바뀌었더라도 FINRA 자체 반복점검 알림은 보내지 않는다.
@@ -132,8 +142,11 @@ class Monitor:
 
     def run_all(self) -> str:
         results: dict[str, Any] = {}
+        # `finra`와 `us`는 같은 "미국" 판정을 공유한다.  FINRA는 수집만 하고
+        # 알림은 해외 종가까지 갱신된 뒤 `us` 단계에서 한 번만 보낸다.  이렇게
+        # 해야 중복 전송이 없고, 전송되는 판정도 최신 종가를 반영한다.
         steps = (
-            ("finra", lambda: self.run_finra(collect=True)),
+            ("finra", lambda: self.run_finra(collect=True, notify=False)),
             ("us", self.run_us),
             ("korea", lambda: self.run_korea(collect=True)),
             ("crypto", lambda: self.run_crypto(collect=True)),
@@ -227,8 +240,14 @@ class Monitor:
         self, key: str, assessment: Assessment, message: str, eligible: bool = True
     ) -> None:
         changed = self.store.set_state(key, assessment.state, assessment.payload)
-        if (eligible and changed) or self.force_alert:
-            self.telegram.send(message)
+        if not ((eligible and changed) or self.force_alert):
+            return
+        if key in self._sent_keys:
+            # Already delivered for this key in this run; a second push would be
+            # a duplicate of the same market report.
+            return
+        self._sent_keys.add(key)
+        self.telegram.send(message)
 
 
 def doctor(config: dict[str, Any]) -> dict[str, Any]:
