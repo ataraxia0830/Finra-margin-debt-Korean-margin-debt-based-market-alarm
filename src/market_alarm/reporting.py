@@ -82,7 +82,8 @@ def render_korea(a: Assessment) -> str:
         first_month = p.get("first_balance_decrease_month")
         lines += [
             f"전체 신용잔고 YoY: {fmt_pct(p.get('current_yoy'))}",
-            f"직전 전고 YoY: {fmt_pct(p.get('peak_yoy'))} ({p.get('peak_yoy_month', 'N/A')})",
+            f"직전 전고 YoY: {fmt_pct(p.get('peak_yoy'))} ({p.get('peak_yoy_month', 'N/A')}, "
+            f"최근 {p.get('lookback_months', 48)}개월 내)",
             "",
             f"[매수조건] 전고점 YoY {fmt_pct(overheat_yoy)} 이상 + 신용공여 잔고추이 "
             f"YoY {fmt_pct(buy_yoy)} 이하: {_ok(p.get('market_buy_yoy_ok'))}",
