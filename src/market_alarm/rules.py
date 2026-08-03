@@ -274,15 +274,35 @@ def assess_korea(
         else float("nan"),
         "stocks": stocks,
     }
-    if overheat.empty:
-        return Assessment("NORMAL", "평시 매수", "WATCH", base)
-
+    # 직전 전고 YoY와 붕괴 이력은 과열 이력이 없더라도 알람에 항상 표시하므로
+    # 조기 반환보다 먼저 계산한다.  아래 계산은 순수 집계라 판정에는 영향이 없다.
     peak_month = growth.idxmax()
     peak_yoy = float(growth.loc[peak_month])
     since_peak = monthly.loc[peak_month:]
     peak_balance = float(since_peak.max())
     balance_dd = drawdown(float(monthly.iloc[-1]), peak_balance)
     relative_yoy_drop = (current_yoy / peak_yoy - 1) * 100
+
+    after_peak_bal = monthly.loc[peak_month:]
+    first_decrease = after_peak_bal.pct_change(fill_method=None)
+    first_decrease = first_decrease[first_decrease < 0]
+    prior_window = monthly.loc[
+        current_month
+        - pd.DateOffset(months=int(cfg["prior_crash_lookback_months"])) : current_month
+    ]
+    rolling_peak = prior_window.cummax()
+    prior_crash = bool(
+        ((prior_window / rolling_peak - 1) * 100 <= float(cfg["prior_crash_cutoff"])).any()
+    )
+
+    overheat_yoy = float(cfg["overheat_yoy"])
+    buy_yoy_limit = float(cfg["buy_warning_yoy"])
+    balance_dd_limit = float(cfg["balance_drawdown_min"])
+    sell_drop_limit = float(cfg["sell_relative_drop"])
+    first_decrease_month = (
+        first_decrease.index[0].strftime("%Y-%m") if not first_decrease.empty else None
+    )
+
     base.update(
         {
             "peak_yoy": peak_yoy,
@@ -290,8 +310,36 @@ def assess_korea(
             "peak_balance": peak_balance,
             "balance_drawdown": balance_dd,
             "yoy_relative_drop": relative_yoy_drop,
+            "first_balance_decrease_month": first_decrease_month,
+            "prior_18m_crash": prior_crash,
+            # 알람에 그대로 노출되는 시장 단위 매수·매도 조건.  임계값도 함께
+            # 실어 보내 표기와 판정이 어긋날 수 없게 한다.
+            "overheat_yoy_threshold": overheat_yoy,
+            "buy_yoy_threshold": buy_yoy_limit,
+            "balance_drawdown_threshold": balance_dd_limit,
+            "sell_relative_drop_threshold": sell_drop_limit,
+            "prior_crash_cutoff": float(cfg["prior_crash_cutoff"]),
+            "prior_crash_lookback_months": int(cfg["prior_crash_lookback_months"]),
+            "peak_yoy_overheat_ok": bool(peak_yoy >= overheat_yoy),
+            "buy_yoy_ok": bool(current_yoy <= buy_yoy_limit),
+            "market_buy_yoy_ok": bool(
+                peak_yoy >= overheat_yoy and current_yoy <= buy_yoy_limit
+            ),
+            "market_buy_balance_ok": bool(balance_dd <= balance_dd_limit),
+            "no_prior_crash_ok": not prior_crash,
+            "sell_relative_drop_ok": bool(relative_yoy_drop <= sell_drop_limit),
+            "first_decrease_ok": bool(first_decrease_month is not None),
+            "market_sell_all_ok": bool(
+                not prior_crash
+                and peak_yoy >= overheat_yoy
+                and relative_yoy_drop <= sell_drop_limit
+                and first_decrease_month is not None
+            ),
         }
     )
+
+    if overheat.empty:
+        return Assessment("NORMAL", "평시 매수", "WATCH", base)
 
     if current_yoy <= float(cfg["buy_strong_yoy"]):
         market_ready = balance_dd <= float(cfg["balance_drawdown_min"])
@@ -312,21 +360,12 @@ def assess_korea(
         return Assessment("BUY_WARNING_MINUS_25", "약한 매수", "TRIGGERED", base)
 
     # 매도: 정점 이후 최초 잔고 감소월과 YoY 상대하락 15%를 모두 확인한다.
-    after_peak_bal = monthly.loc[peak_month:]
-    first_decrease = after_peak_bal.pct_change(fill_method=None)
-    first_decrease = first_decrease[first_decrease < 0]
-    prior_window = monthly.loc[current_month - pd.DateOffset(months=int(cfg["prior_crash_lookback_months"])) : current_month]
-    rolling_peak = prior_window.cummax()
-    prior_crash = ((prior_window / rolling_peak - 1) * 100 <= float(cfg["prior_crash_cutoff"])).any()
+    # (계산은 위에서 이미 끝났고, 여기서는 판정만 한다.)
     market_sell = (
-        relative_yoy_drop <= float(cfg["sell_relative_drop"])
+        relative_yoy_drop <= sell_drop_limit
         and not first_decrease.empty
-        and not bool(prior_crash)
+        and not prior_crash
     )
-    base["first_balance_decrease_month"] = (
-        first_decrease.index[0].strftime("%Y-%m") if not first_decrease.empty else None
-    )
-    base["prior_18m_crash"] = bool(prior_crash)
 
     stock_overheat = []
     for symbol, snap in stocks.items():
@@ -688,6 +727,13 @@ def assess_crypto(
     sell_ready = sell_time_active and sell_price_ok and hot_count >= min_count
     sell_trigger = sell_ready and reversal_count >= 1
 
+    weak_buy_ok = bool(time_ok and opportunity_price_ok)
+    strong_buy_ok = bool(time_ok and strong_price_ok and count >= min_count)
+    sell_time_window_ok = bool(observe_month <= sell_elapsed <= core_end)
+    sell_price_gain_ok = bool(
+        symbol != "BTCUSDT" and cycle_gain_from_low >= 10
+    )
+
     payload = {
         "symbol": symbol,
         "reference_time": current_time.isoformat(),
@@ -712,6 +758,21 @@ def assess_crypto(
         "derivative_required": min_count,
         "derivative_excess": int(count - min_count),
         "time_ok": bool(time_ok),
+        # 알람이 "약한 매수 조건: 달성"처럼 뭉뚱그리지 않고 기준을 그대로
+        # 보여줄 수 있도록, 판정에 쓰인 임계값을 전부 payload에 싣는다.
+        "buy_months_min": float(spec["buy_months_min"]),
+        "buy_months_max": float(spec["buy_months_max"]),
+        "weak_buy_ok": weak_buy_ok,
+        "strong_buy_ok": strong_buy_ok,
+        "sell_time_window_min": observe_month,
+        "sell_time_window_max": core_end,
+        "sell_time_window_ok": sell_time_window_ok,
+        "sell_price_percentile_threshold": price_pct_threshold,
+        "sell_price_ma120_hot": bool(ma120_hot),
+        "sell_price_gain_ok": sell_price_gain_ok,
+        "sell_price_gain_multiple": cycle_gain_from_low,
+        "weak_sell_ok": bool(sell_ready),
+        "strong_sell_ok": bool(sell_trigger),
         "opportunity_price_threshold": opportunity_price_threshold,
         "strong_price_threshold": strong_price_threshold,
         "opportunity_price_ok": bool(opportunity_price_ok),
