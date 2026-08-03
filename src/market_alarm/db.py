@@ -43,6 +43,13 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            # Self-heal databases that already contain unparseable timestamps
+            # (e.g. the literal "NaT" a NaT index used to serialise into).  Such
+            # rows carry no information and break every time-based window.
+            conn.execute(
+                "DELETE FROM points WHERE ts IS NULL OR ts NOT GLOB "
+                "'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'"
+            )
 
     @contextmanager
     def connect(self):
@@ -99,9 +106,25 @@ class Store:
             )
         if df.empty:
             return pd.DataFrame(columns=["value", "meta"])
-        df["ts"] = pd.to_datetime(df["ts"], utc=True, errors="coerce")
+        # ``ts`` is stored as ``Timestamp.isoformat()``.  Binance publishes some
+        # timestamps with millisecond drift (e.g. fundingTime ...008) while
+        # others land exactly on the second, so a single column mixes
+        # ``...T00:00:00+00:00`` and ``...T00:00:00.008000+00:00``.  Without an
+        # explicit format pandas infers one layout from the first row and
+        # coerces every row that does not match it to NaT, which later blows up
+        # any time-based ``rolling`` window with
+        # "ValueError: index values must not have NaT".  ``format="ISO8601"``
+        # accepts every valid ISO-8601 precision; anything still unparseable is
+        # genuinely corrupt and is dropped rather than kept as a NaT index.
+        df["ts"] = pd.to_datetime(df["ts"], utc=True, errors="coerce", format="ISO8601")
+        df = df.loc[df["ts"].notna()]
+        if df.empty:
+            return pd.DataFrame(columns=["value", "meta"])
         df["meta"] = df["meta_json"].map(json.loads)
-        return df.drop(columns=["meta_json"]).set_index("ts").sort_index()
+        frame = df.drop(columns=["meta_json"]).set_index("ts").sort_index()
+        # String ordering in SQL is not identical to timestamp ordering once
+        # precision varies, so re-sort and collapse duplicates deterministically.
+        return frame[~frame.index.duplicated(keep="last")]
 
     def latest(self, source: str, series: str, symbol: str = "") -> dict[str, Any] | None:
         with self.connect() as conn:
