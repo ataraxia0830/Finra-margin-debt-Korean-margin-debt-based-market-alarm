@@ -72,8 +72,8 @@ binance:
     BTCUSDT:
       name: "BTC"
       sell_cycle_high_date: "2021-11-10"
-      buy_months_min: 12
-      buy_months_max: 14
+      buy_months_min: 9
+      buy_months_max: 15
       buy_opportunity_price_drawdown: -60
       buy_price_drawdown: -70
       buy_oi_drawdown: -50
@@ -81,8 +81,8 @@ binance:
     SOLUSDT:
       name: "SOL"
       sell_cycle_high_date: "2021-11-06"
-      buy_months_min: 10
-      buy_months_max: 14
+      buy_months_min: 9
+      buy_months_max: 15
       buy_opportunity_price_drawdown: -80
       buy_price_drawdown: -85
       buy_oi_drawdown: -60
@@ -90,7 +90,7 @@ binance:
   derivative_min_count: 2
   sell_observe_month: 42
   sell_watch_month: 45
-  sell_core_end_month: 51
+  sell_core_end_month: 54
   sell_price_ma120_percentile: 90
   sell_price_lookback_days: 1095
   sell_hot_lookback_days: 1095
