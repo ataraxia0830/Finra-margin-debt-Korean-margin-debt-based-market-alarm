@@ -264,9 +264,19 @@ def assess_korea(
         )
     current_month = growth.index[-1]
     current_yoy = float(growth.iloc[-1])
-    overheat = growth[growth >= float(cfg["overheat_yoy"])]
+    # FINRA와 동일하게 "직전 고점"은 최근 N개월 창 안에서만 찾는다.  창을 두지
+    # 않으면 2021년 같은 오래된 사이클 정점이 영구히 기준으로 남아, 현재
+    # 사이클의 전고점(예: 2026-05)을 가려버린다.
+    lookback_months = int(cfg.get("lookback_months", 48))
+    lookback_start = current_month - pd.DateOffset(months=lookback_months)
+    prior = growth.loc[lookback_start:current_month]
+    if prior.empty:
+        prior = growth
+    overheat = prior[prior >= float(cfg["overheat_yoy"])]
     base: dict[str, Any] = {
         "reference_month": current_month.strftime("%Y-%m"),
+        "lookback_months": lookback_months,
+        "lookback_start_month": lookback_start.strftime("%Y-%m"),
         "current_yoy": current_yoy,
         "current_balance": float(monthly.iloc[-1]),
         "previous_month_change": float((monthly.iloc[-1] / monthly.iloc[-2] - 1) * 100)
@@ -276,8 +286,8 @@ def assess_korea(
     }
     # 직전 전고 YoY와 붕괴 이력은 과열 이력이 없더라도 알람에 항상 표시하므로
     # 조기 반환보다 먼저 계산한다.  아래 계산은 순수 집계라 판정에는 영향이 없다.
-    peak_month = growth.idxmax()
-    peak_yoy = float(growth.loc[peak_month])
+    peak_month = prior.idxmax()
+    peak_yoy = float(prior.loc[peak_month])
     since_peak = monthly.loc[peak_month:]
     peak_balance = float(since_peak.max())
     balance_dd = drawdown(float(monthly.iloc[-1]), peak_balance)
