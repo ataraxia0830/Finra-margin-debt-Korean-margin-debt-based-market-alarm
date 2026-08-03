@@ -411,9 +411,19 @@ def assess_crypto(
     basis_percent: pd.Series | None = None,
 ) -> Assessment:
     spec = cfg["symbols"][symbol]
-    price = price.dropna().sort_index()
-    oi = oi.dropna().sort_index()
-    funding = funding.dropna().sort_index()
+    # ``dropna()`` removes missing *values* but leaves rows whose *index* is
+    # NaT, and a NaT in the index makes ``rolling("7D")`` raise
+    # "index values must not have NaT".  Normalise every incoming series so a
+    # single unparseable timestamp cannot take down the whole crypto job.
+    price = _timeseries(price)
+    oi = _timeseries(oi)
+    funding = _timeseries(funding)
+    long_short = _timeseries(long_short)
+    basis = _timeseries(basis)
+    btc_price = None if btc_price is None else _timeseries(btc_price)
+    mark_price = None if mark_price is None else _timeseries(mark_price)
+    index_price = None if index_price is None else _timeseries(index_price)
+    basis_percent = None if basis_percent is None else _timeseries(basis_percent)
     if price.empty or oi.empty or funding.empty:
         return Assessment("INSUFFICIENT_DATA", "판정 보류", "WATCH", {"symbol": symbol})
     current_time = max(price.index[-1], oi.index[-1])
@@ -765,6 +775,22 @@ def _return(series: pd.Series) -> float:
     if len(series) < 2 or series.iloc[0] == 0:
         return float("nan")
     return float((series.iloc[-1] / series.iloc[0] - 1) * 100)
+
+
+def _timeseries(series: pd.Series) -> pd.Series:
+    """Return a series safe for time-based windows.
+
+    Drops missing values, drops NaT index entries, sorts, and keeps the last
+    observation for duplicated timestamps.  Time-based ``rolling`` windows
+    require a monotonic DatetimeIndex with no NaT.
+    """
+    clean = series.dropna()
+    if clean.empty:
+        return clean
+    if isinstance(clean.index, pd.DatetimeIndex):
+        clean = clean[clean.index.notna()]
+    clean = clean.sort_index()
+    return clean[~clean.index.duplicated(keep="last")]
 
 
 def _window(series: pd.Series, days: int) -> pd.Series:
