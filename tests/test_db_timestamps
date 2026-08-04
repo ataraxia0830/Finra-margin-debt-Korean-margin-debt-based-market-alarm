@@ -30,7 +30,7 @@ def test_mixed_precision_timestamps_do_not_become_nat(tmp_path):
     assert not frame["value"].rolling("7D", min_periods=1).mean().isna().any()
 
 
-def test_corrupt_timestamp_rows_are_purged_on_open(tmp_path):
+def test_corrupt_timestamp_rows_are_ignored_on_read(tmp_path):
     path = tmp_path / "market.sqlite"
     store = Store(str(path))
     store.upsert_points(
@@ -46,6 +46,58 @@ def test_corrupt_timestamp_rows_are_purged_on_open(tmp_path):
     frame = reopened.frame("binance", "funding_rate", "BTCUSDT")
     assert len(frame) == 1
     assert not frame.index.isna().any()
+
+
+def test_opening_the_store_never_deletes_rows(tmp_path):
+    """The committed production DB must survive being opened, whatever it holds."""
+    import sqlite3
+
+    path = tmp_path / "market.sqlite"
+    store = Store(str(path))
+    store.upsert_points(
+        "finra",
+        "margin_debt",
+        [("2024-01-31T00:00:00+00:00", 800.0, None), ("NaT", 1.0, None)],
+    )
+    with sqlite3.connect(path) as conn:
+        before = conn.execute("SELECT COUNT(*) FROM points").fetchone()[0]
+    Store(str(path))
+    Store(str(path))
+    with sqlite3.connect(path) as conn:
+        after = conn.execute("SELECT COUNT(*) FROM points").fetchone()[0]
+    assert after == before == 2
+
+
+def test_latest_ignores_a_corrupt_nat_row_even_though_it_sorts_last(tmp_path):
+    """Reproduces the crash the crypto job hit: 'N' sorts after every digit,
+    so plain ``ORDER BY ts DESC`` returned the literal string "NaT" as the
+    "latest" row.  ``binance.collect`` then does
+    ``pd.Timestamp(existing["ts"]).to_pydatetime() - timedelta(...)``, which
+    raises ``ValueError: NaTType does not support timestamp``.
+    """
+    from datetime import timedelta
+
+    store = _store(tmp_path)
+    store.upsert_points(
+        "binance",
+        "spot_close",
+        [("2026-08-01T00:00:00+00:00", 60000.0, None), ("NaT", 1.0, None)],
+        symbol="BTCUSDT",
+    )
+    latest = store.latest("binance", "spot_close", "BTCUSDT")
+    assert latest is not None
+    assert latest["ts"] == "2026-08-01T00:00:00+00:00"
+    # This line is the one that used to crash before rows were queried with
+    # a GLOB filter.
+    pd.Timestamp(latest["ts"]).to_pydatetime() - timedelta(days=2)
+
+
+def test_latest_of_only_corrupt_rows_is_none(tmp_path):
+    store = _store(tmp_path)
+    store.upsert_points(
+        "binance", "spot_close", [("NaT", 1.0, None)], symbol="BTCUSDT"
+    )
+    assert store.latest("binance", "spot_close", "BTCUSDT") is None
 
 
 def test_frame_of_unknown_series_is_empty(tmp_path):
