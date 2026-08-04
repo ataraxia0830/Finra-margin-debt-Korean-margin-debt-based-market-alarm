@@ -43,13 +43,11 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             conn.executescript(SCHEMA)
-            # Self-heal databases that already contain unparseable timestamps
-            # (e.g. the literal "NaT" a NaT index used to serialise into).  Such
-            # rows carry no information and break every time-based window.
-            conn.execute(
-                "DELETE FROM points WHERE ts IS NULL OR ts NOT GLOB "
-                "'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'"
-            )
+        # NOTE: opening the store must never delete rows.  ``data/market_alarm.sqlite3``
+        # is the committed production history, and a migration that runs on every
+        # single job would rewrite it with no way back.  Unparseable timestamps are
+        # filtered on read in ``frame()`` instead, which fixes the same bug without
+        # touching what is on disk.
 
     @contextmanager
     def connect(self):
@@ -126,15 +124,24 @@ class Store:
         # precision varies, so re-sort and collapse duplicates deterministically.
         return frame[~frame.index.duplicated(keep="last")]
 
+    # An ISO-8601 timestamp always starts with YYYY-MM-DD, so this pattern keeps
+    # only rows whose ``ts`` can actually be parsed back into a date.
+    _TS_PATTERN = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*"
+
     def latest(self, source: str, series: str, symbol: str = "") -> dict[str, Any] | None:
+        # Text ordering puts a stray "NaT" *after* every real timestamp ("N" > "9"
+        # in ASCII), so plain ``ORDER BY ts DESC`` hands back the corrupt row
+        # first. Callers then do ``pd.Timestamp(ts)`` -> NaT and crash on
+        # ``.timestamp()`` with "NaTType does not support timestamp". Filter
+        # unparseable rows out of the read; nothing is deleted from disk.
         with self.connect() as conn:
             row = conn.execute(
                 """
                 SELECT ts, value, meta_json FROM points
-                WHERE source=? AND series=? AND symbol=?
+                WHERE source=? AND series=? AND symbol=? AND ts GLOB ?
                 ORDER BY ts DESC LIMIT 1
                 """,
-                (source, series, symbol),
+                (source, series, symbol, self._TS_PATTERN),
             ).fetchone()
         if not row:
             return None
