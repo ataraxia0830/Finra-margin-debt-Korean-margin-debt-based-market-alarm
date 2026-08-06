@@ -35,3 +35,17 @@ def test_telegram_dry_run_still_works_without_secrets(monkeypatch, capsys):
     telegram.send("test message")
 
     assert "test message" in capsys.readouterr().out
+
+
+def test_telegram_uses_configured_retry_count():
+    telegram = Telegram(
+        {
+            "alerts": {"telegram_max_chars": 3500},
+            "http": {"retries": 5},
+        }
+    )
+
+    adapter = telegram.client.get_adapter("https://")
+    assert adapter.max_retries.total == 5
+    assert adapter.max_retries.connect == 5
+    assert adapter.max_retries.read == 5
