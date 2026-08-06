@@ -3,7 +3,7 @@ database: data/market_alarm.sqlite3
 
 http:
   timeout_seconds: 30
-  retries: 3
+  retries: 5
   user_agent: "market-alarm/1.0 (+personal research monitor)"
 
 finra:
