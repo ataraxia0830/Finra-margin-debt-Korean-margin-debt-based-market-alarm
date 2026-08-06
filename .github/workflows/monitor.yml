@@ -16,12 +16,19 @@ on:
         type: boolean
   schedule:
     # GitHub cron은 UTC. KST = UTC+9.
-    - cron: "30 9 * * 1-5"       # 평일 18:30 KST: 한국
-    - cron: "0 23 * * *"         # 매일 08:00 KST: 미국 전일 종가
-    - cron: "5 3,7,11,15,19,23 * * *"  # KST 00:05/04:05/...: 코인
-    - cron: "0 6 15-25 * *"      # 매월 15~25일 15:00 KST: FINRA
-    - cron: "50 14 28-31 * *"    # 23:50 KST: 코드에서 실제 월말만 실행
-    - cron: "0 0 1 * *"          # 매월 1일 09:00 KST: 전체 상태보고
+    # 정각 부근은 GitHub Actions 예약 실행이 지연/누락되기 쉬워 피한다.
+    # 한국·미국·월말·월간은 별도 보완 실행을 둔다. 상태가 같으면 알림은
+    # 전송되지 않으므로 정상 실행 시 Telegram 중복은 생기지 않는다.
+    - cron: "37 9 * * 1-5"        # 평일 18:37 KST: 한국 1차
+    - cron: "17 11 * * 1-5"       # 평일 20:17 KST: 한국 보완
+    - cron: "17 23 * * *"         # 매일 08:17 KST: 미국 1차
+    - cron: "47 0 * * *"          # 매일 09:47 KST: 미국 보완
+    - cron: "23 3,7,11,15,19,23 * * *"  # KST 00:23/04:23/...: 코인
+    - cron: "27 6 15-25 * *"      # 매월 15~25일 15:27 KST: FINRA
+    - cron: "47 13 28-31 * *"     # 22:47 KST: 월말 보완
+    - cron: "47 14 28-31 * *"     # 23:47 KST: 월말 1차
+    - cron: "27 0 1 * *"          # 매월 1일 09:27 KST: 월간보고 1차
+    - cron: "27 3 1 * *"          # 매월 1일 12:27 KST: 월간보고 보완
 
 permissions:
   contents: write
@@ -82,12 +89,12 @@ jobs:
             task="${{ inputs.task }}"
           else
             case "${{ github.event.schedule }}" in
-              "30 9 * * 1-5") task="korea" ;;
-              "0 23 * * *") task="us" ;;
-              "5 3,7,11,15,19,23 * * *") task="crypto" ;;
-              "0 6 15-25 * *") task="finra" ;;
-              "50 14 28-31 * *") task="month-end" ;;
-              "0 0 1 * *") task="monthly" ;;
+              "37 9 * * 1-5"|"17 11 * * 1-5") task="korea" ;;
+              "17 23 * * *"|"47 0 * * *") task="us" ;;
+              "23 3,7,11,15,19,23 * * *") task="crypto" ;;
+              "27 6 15-25 * *") task="finra" ;;
+              "47 13 28-31 * *"|"47 14 28-31 * *") task="month-end" ;;
+              "27 0 1 * *"|"27 3 1 * *") task="monthly" ;;
               *) echo "Unknown schedule"; exit 1 ;;
             esac
           fi
