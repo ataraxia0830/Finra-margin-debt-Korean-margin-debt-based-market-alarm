@@ -4,6 +4,8 @@ import os
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 class Telegram:
@@ -12,6 +14,19 @@ class Telegram:
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
         self.max_chars = int(config["alerts"]["telegram_max_chars"])
         self.dry_run = os.getenv("DRY_RUN", "").lower() in {"1", "true", "yes"}
+        retries = int(config.get("http", {}).get("retries", 5))
+        retry = Retry(
+            total=retries,
+            connect=retries,
+            read=retries,
+            status=retries,
+            backoff_factor=0.7,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=("POST",),
+            respect_retry_after_header=True,
+        )
+        self.client = requests.Session()
+        self.client.mount("https://", HTTPAdapter(max_retries=retry))
 
     @property
     def configured(self) -> bool:
@@ -35,7 +50,7 @@ class Telegram:
         self.require_configured()
         chunks = _split(text, self.max_chars)
         for chunk in chunks:
-            response = requests.post(
+            response = self.client.post(
                 f"https://api.telegram.org/bot{self.token}/sendMessage",
                 json={
                     "chat_id": self.chat_id,
