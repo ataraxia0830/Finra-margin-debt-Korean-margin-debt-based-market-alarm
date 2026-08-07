@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 
 from market_alarm.cli import main
 from market_alarm.telegram import Telegram
@@ -49,3 +50,24 @@ def test_telegram_uses_configured_retry_count():
     assert adapter.max_retries.total == 5
     assert adapter.max_retries.connect == 5
     assert adapter.max_retries.read == 5
+
+
+def test_workflow_accepts_current_and_queued_legacy_schedules():
+    workflow = (
+        Path(__file__).parents[1] / ".github" / "workflows" / "monitor.yml"
+    ).read_text(encoding="utf-8")
+
+    # Current six-hour crypto cadence.
+    assert '- cron: "23 3,9,15,21 * * *"' in workflow
+
+    # Events queued before either schedule migration must remain routable.
+    for legacy_schedule in (
+        '"30 9 * * 1-5"',
+        '"0 23 * * *"',
+        '"5 3,7,11,15,19,23 * * *"',
+        '"23 3,7,11,15,19,23 * * *"',
+        '"0 6 15-25 * *"',
+        '"50 14 28-31 * *"',
+        '"0 0 1 * *"',
+    ):
+        assert legacy_schedule in workflow
