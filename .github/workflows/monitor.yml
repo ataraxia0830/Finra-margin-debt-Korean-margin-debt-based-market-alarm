@@ -23,7 +23,7 @@ on:
     - cron: "17 11 * * 1-5"       # 평일 20:17 KST: 한국 보완
     - cron: "17 23 * * *"         # 매일 08:17 KST: 미국 1차
     - cron: "47 0 * * *"          # 매일 09:47 KST: 미국 보완
-    - cron: "23 3,7,11,15,19,23 * * *"  # KST 00:23/04:23/...: 코인
+    - cron: "23 3,9,15,21 * * *"  # KST 00:23/06:23/12:23/18:23: 코인
     - cron: "27 6 15-25 * *"      # 매월 15~25일 15:27 KST: FINRA
     - cron: "47 13 28-31 * *"     # 22:47 KST: 월말 보완
     - cron: "47 14 28-31 * *"     # 23:47 KST: 월말 1차
@@ -89,12 +89,16 @@ jobs:
             task="${{ inputs.task }}"
           else
             case "${{ github.event.schedule }}" in
-              "37 9 * * 1-5"|"17 11 * * 1-5") task="korea" ;;
-              "17 23 * * *"|"47 0 * * *") task="us" ;;
-              "23 3,7,11,15,19,23 * * *") task="crypto" ;;
-              "27 6 15-25 * *") task="finra" ;;
-              "47 13 28-31 * *"|"47 14 28-31 * *") task="month-end" ;;
-              "27 0 1 * *"|"27 3 1 * *") task="monthly" ;;
+              # GitHub may keep an event queued under an older cron after this
+              # workflow file is updated, then execute it against the newest
+              # file. Keep prior cron values as aliases so those delayed events
+              # still select the intended task instead of failing as unknown.
+              "30 9 * * 1-5"|"37 9 * * 1-5"|"17 11 * * 1-5") task="korea" ;;
+              "0 23 * * *"|"17 23 * * *"|"47 0 * * *") task="us" ;;
+              "5 3,7,11,15,19,23 * * *"|"23 3,7,11,15,19,23 * * *"|"23 3,9,15,21 * * *") task="crypto" ;;
+              "0 6 15-25 * *"|"27 6 15-25 * *") task="finra" ;;
+              "50 14 28-31 * *"|"47 13 28-31 * *"|"47 14 28-31 * *") task="month-end" ;;
+              "0 0 1 * *"|"27 0 1 * *"|"27 3 1 * *") task="monthly" ;;
               *) echo "Unknown schedule"; exit 1 ;;
             esac
           fi
