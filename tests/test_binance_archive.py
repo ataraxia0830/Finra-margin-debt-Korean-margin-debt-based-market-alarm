@@ -26,6 +26,10 @@ class _ArchiveResponse:
         return None
 
 
+class _MissingArchiveResponse:
+    status_code = 404
+
+
 class _ArchiveClient:
     def get(self, url, **kwargs):
         timestamp = int(pd.Timestamp("2026-07-31T20:00:00Z").timestamp() * 1000)
@@ -62,6 +66,38 @@ class _ArchiveClient:
         )
 
 
+class _MissingCurrentMonthFundingClient(_ArchiveClient):
+    def get(self, url, **kwargs):
+        if "/fundingRate/" in url:
+            return _MissingArchiveResponse()
+        if any(
+            f"/{kind}/" in url
+            for kind in ("premiumIndexKlines", "markPriceKlines", "indexPriceKlines")
+        ):
+            start = pd.Timestamp("2026-08-01T00:00:00Z")
+            rows = []
+            close = "-0.0002"
+            if "/markPriceKlines/" in url:
+                close = "59988"
+            elif "/indexPriceKlines/" in url:
+                close = "60000"
+            for offset in range(8):
+                timestamp = int((start + pd.Timedelta(hours=offset)).timestamp() * 1000)
+                rows.append(
+                    f"{timestamp},{close},{close},{close},{close},0,{timestamp},0,1,0,0,0"
+                )
+            return _ArchiveResponse(
+                _zip_csv(
+                    "kline.csv",
+                    "open_time,open,high,low,close,volume,close_time,quote_volume,count,"
+                    "taker_buy_volume,taker_buy_quote_volume,ignore\n"
+                    + "\n".join(rows)
+                    + "\n",
+                )
+            )
+        return super().get(url, **kwargs)
+
+
 def test_official_archive_fallback_parses_oi_funding_ratio_and_premium():
     oi, funding, ratio, premium = _archive_futures(
         _ArchiveClient(),
@@ -84,3 +120,16 @@ def test_missing_current_month_funding_can_be_estimated_from_premium_formula():
     result = _estimated_funding_from_premium(pd.Series([0.0002] * 8, index=index))
     assert len(result) == 1
     assert round(result["funding_rate"].iloc[-1], 8) == 0.0001
+
+
+def test_archive_fallback_survives_missing_current_month_funding_zip():
+    _, funding, _, _ = _archive_futures(
+        _MissingCurrentMonthFundingClient(),
+        {"http": {"timeout_seconds": 30}},
+        "https://data.binance.vision",
+        "BTCUSDT",
+        days=1,
+        workers=1,
+    )
+    assert not funding.empty
+    assert round(funding["funding_rate"].iloc[-1], 8) == 0.0001
