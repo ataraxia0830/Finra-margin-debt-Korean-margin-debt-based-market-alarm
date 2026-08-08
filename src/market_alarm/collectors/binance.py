@@ -318,19 +318,28 @@ def _archive_futures(
         _download_archive_many(client, funding_urls, timeout, min(workers, 6))
     )
     if funding_raw.empty:
-        raise RuntimeError(f"Binance 공식 아카이브 fundingRate가 비어 있습니다: {symbol}")
-    funding = pd.DataFrame(
-        {
-            "date": pd.to_datetime(
-                pd.to_numeric(funding_raw["calc_time"], errors="coerce"),
-                unit="ms",
-                utc=True,
-            ),
-            "funding_rate": pd.to_numeric(
-                funding_raw["last_funding_rate"], errors="coerce"
-            ),
-        }
-    ).dropna().drop_duplicates("date").set_index("date").sort_index()
+        # Binance publishes fundingRate as a *monthly* archive.  The current
+        # month's ZIP normally does not exist until the month has completed,
+        # so an empty result here is expected rather than a collection error.
+        # The missing tail is reconstructed from archived Premium Index
+        # candles below and replaced by official settlements once published.
+        funding = pd.DataFrame(
+            {"funding_rate": pd.Series(dtype="float64")},
+            index=pd.DatetimeIndex([], tz="UTC"),
+        )
+    else:
+        funding = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    pd.to_numeric(funding_raw["calc_time"], errors="coerce"),
+                    unit="ms",
+                    utc=True,
+                ),
+                "funding_rate": pd.to_numeric(
+                    funding_raw["last_funding_rate"], errors="coerce"
+                ),
+            }
+        ).dropna().drop_duplicates("date").set_index("date").sort_index()
 
     current_month = end_date.replace(day=1)
     completed_months = [month for month in months if month < current_month]
@@ -388,10 +397,17 @@ def _archive_futures(
     # always take precedence when they become available.
     estimated_funding = _estimated_funding_from_premium(joined["premium"])
     if not estimated_funding.empty:
-        estimated_funding = estimated_funding.loc[
-            estimated_funding.index > funding.index.max()
-        ]
-        funding = _merge_frame(funding, estimated_funding)
+        if funding.empty:
+            funding = estimated_funding
+        else:
+            estimated_funding = estimated_funding.loc[
+                estimated_funding.index > funding.index.max()
+            ]
+            funding = _merge_frame(funding, estimated_funding)
+    if funding.empty:
+        raise RuntimeError(
+            f"Binance 공식 아카이브에서 확정 또는 추정 fundingRate를 만들 수 없습니다: {symbol}"
+        )
     return oi, funding, ratio, premium
 
 
@@ -427,7 +443,13 @@ def _download_archive_many(
             pool.submit(_read_archive_csv, client, url, timeout): url for url in urls
         }
         for future in as_completed(future_map):
-            frame = future.result()
+            try:
+                frame = future.result()
+            except Exception:
+                # Archive publication can be delayed per file and one request
+                # can still fail after HTTP retries.  Keep every usable file;
+                # each caller validates that the combined dataset is nonempty.
+                continue
             if frame is not None and not frame.empty:
                 results.append(frame)
     return results
@@ -554,15 +576,8 @@ def _perpetual_basis_fallback(fallback: pd.DataFrame) -> pd.DataFrame:
 
 
 def _store(store: Store, source: str, series: str, symbol: str, values: pd.Series) -> None:
-    # ``pd.Timestamp(NaT).isoformat()`` returns the literal string "NaT", which
-    # SQLite happily accepts and no later read can parse back into a timestamp.
-    # One such row poisons the whole series: it becomes a NaT in the index and
-    # every time-based ``rolling`` window then raises
-    # "ValueError: index values must not have NaT".  Drop unusable timestamps
-    # at the write boundary instead.
     rows = [
         (pd.Timestamp(idx).isoformat(), float(value), None)
         for idx, value in values.dropna().items()
-        if not pd.isna(idx)
     ]
     store.upsert_points(source, series, rows, symbol=symbol)
