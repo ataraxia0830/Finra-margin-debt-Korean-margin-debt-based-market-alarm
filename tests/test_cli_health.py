@@ -65,8 +65,8 @@ def test_workflow_uses_reduced_schedule_and_accepts_queued_legacy_schedules():
         '"17 23 * * *"',
         '"23 9,21 * * *"',
         '"27 6 15,18,21,24 * *"',
-        '"47 14 28-31 * *"',
-        '"27 0 1 * *"',
+        '"47 0 1 * *"',
+        '"27 3 1 * *"',
     )
     assert schedule_block.count("- cron:") == len(active_schedules)
     for current_schedule in active_schedules:
@@ -77,7 +77,8 @@ def test_workflow_uses_reduced_schedule_and_accepts_queued_legacy_schedules():
         '"17 11 * * 1-5"',
         '"47 0 * * *"',
         '"47 13 28-31 * *"',
-        '"27 3 1 * *"',
+        '"47 14 28-31 * *"',
+        '"27 0 1 * *"',
     ):
         assert f"- cron: {removed_backup}" not in schedule_block
 
