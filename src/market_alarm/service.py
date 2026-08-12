@@ -124,8 +124,13 @@ class Monitor:
     def run_month_end(self) -> str:
         now = datetime.now(ZoneInfo(self.config["timezone"]))
         tomorrow = now.date() + timedelta(days=1)
-        if tomorrow.month == now.month:
-            return json.dumps({"skipped": True, "reason": "오늘은 월말이 아님"}, ensure_ascii=False)
+        is_last_day = tomorrow.month != now.month
+        is_first_day = now.day == 1
+        if not (is_last_day or is_first_day):
+            return json.dumps(
+                {"skipped": True, "reason": "오늘은 월말 판정일이 아님"},
+                ensure_ascii=False,
+            )
         results = {
             "finra": self.run_finra(collect=False),
             "korea": self.run_korea(collect=False),
