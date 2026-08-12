@@ -52,22 +52,49 @@ def test_telegram_uses_configured_retry_count():
     assert adapter.max_retries.read == 5
 
 
-def test_workflow_accepts_current_and_queued_legacy_schedules():
+def test_workflow_uses_reduced_schedule_and_accepts_queued_legacy_schedules():
     workflow = (
         Path(__file__).parents[1] / ".github" / "workflows" / "monitor.yml"
     ).read_text(encoding="utf-8")
+    schedule_block = workflow.split("  schedule:", 1)[1].split("\n\npermissions:", 1)[0]
 
-    # Current six-hour crypto cadence.
-    assert '- cron: "23 3,9,15,21 * * *"' in workflow
+    # Active schedule: Korea 1/day, US 1/day, crypto every 12 hours,
+    # FINRA on four selected dates, and one cron entry each for month-end/monthly.
+    active_schedules = (
+        '"37 9 * * 1-5"',
+        '"17 23 * * *"',
+        '"23 9,21 * * *"',
+        '"27 6 15,18,21,24 * *"',
+        '"47 14 28-31 * *"',
+        '"27 0 1 * *"',
+    )
+    assert schedule_block.count("- cron:") == len(active_schedules)
+    for current_schedule in active_schedules:
+        assert f"- cron: {current_schedule}" in schedule_block
 
-    # Events queued before either schedule migration must remain routable.
+    # Daily backup schedules must not remain active.
+    for removed_backup in (
+        '"17 11 * * 1-5"',
+        '"47 0 * * *"',
+        '"47 13 28-31 * *"',
+        '"27 3 1 * *"',
+    ):
+        assert f"- cron: {removed_backup}" not in schedule_block
+
+    # Events queued before schedule migrations must remain routable.
     for legacy_schedule in (
         '"30 9 * * 1-5"',
+        '"17 11 * * 1-5"',
         '"0 23 * * *"',
+        '"47 0 * * *"',
         '"5 3,7,11,15,19,23 * * *"',
         '"23 3,7,11,15,19,23 * * *"',
+        '"23 3,9,15,21 * * *"',
         '"0 6 15-25 * *"',
+        '"27 6 15-25 * *"',
         '"50 14 28-31 * *"',
+        '"47 13 28-31 * *"',
         '"0 0 1 * *"',
+        '"27 3 1 * *"',
     ):
         assert legacy_schedule in workflow
