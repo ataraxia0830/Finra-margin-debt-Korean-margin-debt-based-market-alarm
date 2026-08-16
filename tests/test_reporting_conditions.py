@@ -86,7 +86,7 @@ def test_korea_lists_market_sell_condition_with_all_four_parts(cfg):
     message = render_korea(_korea_assessment(cfg))
     assert "[매도조건] 18개월 내 -45.0% 이상 붕괴 없음" in message
     assert "전고점 YoY +60.0% 이상" in message
-    assert "고점 이후 낙폭 -15.0%" in message
+    assert "고점 이후 YoY 15.0%p 하락" in message
     assert "신용공여 절댓값 최초 감소전환:" in message
 
 

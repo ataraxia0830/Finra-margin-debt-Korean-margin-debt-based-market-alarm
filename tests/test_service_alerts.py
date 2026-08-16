@@ -87,3 +87,30 @@ def test_sent_keys_are_per_monitor_instance(monitor_factory):
     monitor.run("all")
     assert "us" in monitor._sent_keys
     assert len(monitor_factory(force_alert=True)._sent_keys) == 0
+
+
+def test_us_sell_schedule_alerts_once_then_again_only_when_due(monitor_factory):
+    scheduled = Assessment(
+        "SELL_SCHEDULED_2026_11",
+        "강한 매도 / 3개월 후 매도",
+        "TRIGGERED",
+        {"sell_target_month": "2026-11", "sell_due": False},
+    )
+    due = Assessment(
+        "SELL_DUE_2026_11",
+        "강한 매도 / 당월 매도 필요",
+        "TRIGGERED",
+        {"sell_target_month": "2026-11", "sell_due": True},
+    )
+
+    first = monitor_factory(force_alert=False)
+    first._state_alert("us", scheduled, "3개월 후 매도")
+    assert first.telegram.sent == ["3개월 후 매도"]
+
+    middle = monitor_factory(force_alert=False)
+    middle._state_alert("us", scheduled, "반복 금지")
+    assert middle.telegram.sent == []
+
+    target_month = monitor_factory(force_alert=False)
+    target_month._state_alert("us", due, "당월 매도 필요")
+    assert target_month.telegram.sent == ["당월 매도 필요"]

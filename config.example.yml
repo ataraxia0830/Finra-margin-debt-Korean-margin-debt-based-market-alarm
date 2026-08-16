@@ -16,8 +16,10 @@ finra:
   buy_warning_yoy: -25
   buy_strong_yoy: -30
   balance_drawdown_alert_levels: [-20, -25, -30]
-  sell_warning_relative_drop: -10
-  sell_strong_relative_drop: -15
+  # FINRA YoY 정점에서 현재 YoY까지의 퍼센트포인트 하락폭.
+  sell_warning_yoy_drop_points: 10
+  sell_strong_yoy_drop_points: 15
+  sell_delay_months: 3
 
 freesis:
   page_url: "https://freesis.kofia.or.kr/stat/FreeSIS.do?parentDivId=MSIS10000000000000&serviceId=STATSCU0100000070"
@@ -32,7 +34,8 @@ freesis:
   buy_warning_yoy: -25
   buy_strong_yoy: -30
   balance_drawdown_min: -30
-  sell_relative_drop: -15
+  # 전체 신용잔고 YoY 정점에서 현재 YoY까지의 퍼센트포인트 하락폭.
+  sell_yoy_drop_points: 15
   prior_crash_cutoff: -45
   prior_crash_lookback_months: 18
 
