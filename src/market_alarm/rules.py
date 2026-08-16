@@ -101,10 +101,13 @@ def assess_finra(
             "market_regime": "선행 과열 후 디레버리징",
             "opportunity_yoy": opportunity_yoy,
             "strong_yoy": strong_yoy,
-            "sell_warning_relative_drop": float(cfg["sell_warning_relative_drop"]),
-            "sell_strong_relative_drop": float(
-                cfg.get("sell_strong_relative_drop", cfg.get("sell_arm_relative_drop", -15))
+            "sell_warning_yoy_drop_points": float(
+                cfg.get("sell_warning_yoy_drop_points", 10)
             ),
+            "sell_strong_yoy_drop_points": float(
+                cfg.get("sell_strong_yoy_drop_points", 15)
+            ),
+            "sell_delay_months": int(cfg.get("sell_delay_months", 3)),
         }
     )
 
@@ -113,11 +116,10 @@ def assess_finra(
     cycle_balance = monthly.loc[peak_month:]
     peak_balance = float(cycle_balance.max())
     balance_dd = drawdown(float(monthly.iloc[-1]), peak_balance)
-    decline = (
-        float(round((current_yoy / peak_yoy - 1) * 100, 10))
-        if peak_yoy
-        else float("nan")
-    )
+    # These thresholds are percentage-point changes in the YoY reading, not a
+    # percentage change of the YoY reading.  For example, +50% -> +40% is a
+    # 10 percentage-point decline (not a 20% relative decline).
+    yoy_drop_points = float(round(peak_yoy - current_yoy, 10))
     flat, flat_detail = flattening_3m(monthly)
     base.update(
         {
@@ -125,7 +127,7 @@ def assess_finra(
             "peak_yoy_month": peak_month.strftime("%Y-%m"),
             "peak_balance": peak_balance,
             "balance_drawdown": balance_dd,
-            "yoy_relative_drop": decline,
+            "yoy_drop_points": yoy_drop_points,
             "flattening": flat,
             "flattening_detail": flat_detail,
             "recent_3m_change": float((monthly.iloc[-1] / monthly.iloc[-3] - 1) * 100)
@@ -156,10 +158,9 @@ def assess_finra(
         )
 
     after_peak = growth.loc[peak_month:]
-    strong_sell_drop = float(
-        cfg.get("sell_strong_relative_drop", cfg.get("sell_arm_relative_drop", -15))
-    )
-    armed = after_peak[((after_peak / peak_yoy - 1) * 100) <= strong_sell_drop]
+    strong_sell_drop_points = float(cfg.get("sell_strong_yoy_drop_points", 15))
+    after_peak_drop_points = (peak_yoy - after_peak).round(10)
+    armed = after_peak[after_peak_drop_points >= strong_sell_drop_points]
     if not armed.empty:
         armed_month = armed.index[0]
         armed_yoy = float(armed.iloc[0])
@@ -167,13 +168,19 @@ def assess_finra(
             crossing = after_peak.loc[armed_month:]
             crossing = crossing[crossing <= float(cfg["overheat_yoy"])]
             if crossing.empty:
-                return Assessment("WAIT_FOR_YOY_BELOW_50", "강한 매도", "TRIGGERED", base)
+                return Assessment(
+                    "WAIT_FOR_YOY_BELOW_50",
+                    "강한 매도 / YoY +50% 하회 대기",
+                    "TRIGGERED",
+                    base,
+                )
             reference = crossing.index[0]
             base["sell_reference_kind"] = "+50% 최초 하회월"
         else:
             reference = peak_month
             base["sell_reference_kind"] = "YoY 정점월"
-        target = reference + relativedelta(months=3)
+        delay_months = int(cfg.get("sell_delay_months", 3))
+        target = reference + relativedelta(months=delay_months)
         base["sell_reference_month"] = reference.strftime("%Y-%m")
         base["sell_target_month"] = target.strftime("%Y-%m")
         effective_as_of = (
@@ -190,17 +197,17 @@ def assess_finra(
         if due:
             return Assessment(
                 f"SELL_DUE_{target.strftime('%Y_%m')}",
-                "강한 매도",
+                "강한 매도 / 당월 매도 필요",
                 "TRIGGERED",
                 base,
             )
         return Assessment(
             f"SELL_SCHEDULED_{target.strftime('%Y_%m')}",
-            "강한 매도",
+            f"강한 매도 / {delay_months}개월 후 매도",
             "TRIGGERED",
             base,
         )
-    if decline <= float(cfg["sell_warning_relative_drop"]):
+    if yoy_drop_points >= float(cfg.get("sell_warning_yoy_drop_points", 10)):
         return Assessment("SELL_WARNING_DROP_10", "약한 매도", "TRIGGERED", base)
     return Assessment("FINRA_OVERHEAT_50", "평시 매수", "WATCH", base)
 
@@ -291,7 +298,7 @@ def assess_korea(
     since_peak = monthly.loc[peak_month:]
     peak_balance = float(since_peak.max())
     balance_dd = drawdown(float(monthly.iloc[-1]), peak_balance)
-    relative_yoy_drop = (current_yoy / peak_yoy - 1) * 100
+    yoy_drop_points = float(round(peak_yoy - current_yoy, 10))
 
     after_peak_bal = monthly.loc[peak_month:]
     first_decrease = after_peak_bal.pct_change(fill_method=None)
@@ -308,7 +315,7 @@ def assess_korea(
     overheat_yoy = float(cfg["overheat_yoy"])
     buy_yoy_limit = float(cfg["buy_warning_yoy"])
     balance_dd_limit = float(cfg["balance_drawdown_min"])
-    sell_drop_limit = float(cfg["sell_relative_drop"])
+    sell_drop_points = float(cfg.get("sell_yoy_drop_points", 15))
     first_decrease_month = (
         first_decrease.index[0].strftime("%Y-%m") if not first_decrease.empty else None
     )
@@ -319,7 +326,7 @@ def assess_korea(
             "peak_yoy_month": peak_month.strftime("%Y-%m"),
             "peak_balance": peak_balance,
             "balance_drawdown": balance_dd,
-            "yoy_relative_drop": relative_yoy_drop,
+            "yoy_drop_points": yoy_drop_points,
             "first_balance_decrease_month": first_decrease_month,
             "prior_18m_crash": prior_crash,
             # 알람에 그대로 노출되는 시장 단위 매수·매도 조건.  임계값도 함께
@@ -327,7 +334,7 @@ def assess_korea(
             "overheat_yoy_threshold": overheat_yoy,
             "buy_yoy_threshold": buy_yoy_limit,
             "balance_drawdown_threshold": balance_dd_limit,
-            "sell_relative_drop_threshold": sell_drop_limit,
+            "sell_yoy_drop_points_threshold": sell_drop_points,
             "prior_crash_cutoff": float(cfg["prior_crash_cutoff"]),
             "prior_crash_lookback_months": int(cfg["prior_crash_lookback_months"]),
             "peak_yoy_overheat_ok": bool(peak_yoy >= overheat_yoy),
@@ -337,12 +344,12 @@ def assess_korea(
             ),
             "market_buy_balance_ok": bool(balance_dd <= balance_dd_limit),
             "no_prior_crash_ok": not prior_crash,
-            "sell_relative_drop_ok": bool(relative_yoy_drop <= sell_drop_limit),
+            "sell_yoy_drop_points_ok": bool(yoy_drop_points >= sell_drop_points),
             "first_decrease_ok": bool(first_decrease_month is not None),
             "market_sell_all_ok": bool(
                 not prior_crash
                 and peak_yoy >= overheat_yoy
-                and relative_yoy_drop <= sell_drop_limit
+                and yoy_drop_points >= sell_drop_points
                 and first_decrease_month is not None
             ),
         }
@@ -369,10 +376,10 @@ def assess_korea(
     if current_yoy <= float(cfg["buy_warning_yoy"]):
         return Assessment("BUY_WARNING_MINUS_25", "약한 매수", "TRIGGERED", base)
 
-    # 매도: 정점 이후 최초 잔고 감소월과 YoY 상대하락 15%를 모두 확인한다.
+    # 매도: 정점 이후 최초 잔고 감소월과 YoY 15%p 하락을 모두 확인한다.
     # (계산은 위에서 이미 끝났고, 여기서는 판정만 한다.)
     market_sell = (
-        relative_yoy_drop <= sell_drop_limit
+        yoy_drop_points >= sell_drop_points
         and not first_decrease.empty
         and not prior_crash
     )

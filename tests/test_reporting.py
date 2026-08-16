@@ -21,8 +21,9 @@ def test_alert_output_is_clean_and_uses_fixed_signal_names():
             "buy_warning_yoy": -25,
             "buy_strong_yoy": -30,
             "balance_drawdown_alert_levels": [-20, -25, -30],
-            "sell_warning_relative_drop": -10,
-            "sell_strong_relative_drop": -15,
+            "sell_warning_yoy_drop_points": 10,
+            "sell_strong_yoy_drop_points": 15,
+            "sell_delay_months": 3,
         },
     )
     message = render_finra(assessment)
@@ -31,6 +32,54 @@ def test_alert_output_is_clean_and_uses_fixed_signal_names():
     assert "[신뢰" not in message
     assert "거리" not in message
     assert "약한 매수 기준 -10.0%: 달성" in message
+
+
+def test_finra_scheduled_and_due_sell_wording():
+    payload = {
+        "reference_month": "2026-08",
+        "market_regime": "선행 과열 후 디레버리징",
+        "lookback_months": 48,
+        "overheat_yoy": 50,
+        "overheat_in_lookback": True,
+        "lookback_peak_yoy": 50,
+        "lookback_peak_month": "2026-07",
+        "current_yoy": 35,
+        "opportunity_yoy": -25,
+        "strong_yoy": -30,
+        "peak_yoy": 50,
+        "peak_yoy_month": "2026-07",
+        "balance_drawdown": -5,
+        "yoy_drop_points": 15,
+        "sell_warning_yoy_drop_points": 10,
+        "sell_strong_yoy_drop_points": 15,
+        "sell_delay_months": 3,
+        "sell_reference_kind": "YoY 정점월",
+        "sell_reference_month": "2026-08",
+        "sell_target_month": "2026-11",
+        "flattening": False,
+    }
+
+    scheduled = render_finra(
+        Assessment(
+            "SELL_SCHEDULED_2026_11",
+            "강한 매도 / 3개월 후 매도",
+            "TRIGGERED",
+            {**payload, "sell_due": False},
+        )
+    )
+    due = render_finra(
+        Assessment(
+            "SELL_DUE_2026_11",
+            "강한 매도 / 당월 매도 필요",
+            "TRIGGERED",
+            {**payload, "sell_due": True},
+        )
+    )
+
+    assert "[신호] 강한 매도 / 3개월 후 매도" in scheduled
+    assert "매도 안내: 3개월 후 매도" in scheduled
+    assert "[신호] 강한 매도 / 당월 매도 필요" in due
+    assert "매도 안내: 당월 매도 필요" in due
 
 
 def test_korea_output_lists_buy_and_both_sell_gap_thresholds():

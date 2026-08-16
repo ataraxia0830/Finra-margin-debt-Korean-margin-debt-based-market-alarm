@@ -18,8 +18,9 @@ def _finra_cfg():
         "buy_warning_yoy": -25,
         "buy_strong_yoy": -30,
         "balance_drawdown_alert_levels": [-20, -25, -30],
-        "sell_warning_relative_drop": -10,
-        "sell_strong_relative_drop": -15,
+        "sell_warning_yoy_drop_points": 10,
+        "sell_strong_yoy_drop_points": 15,
+        "sell_delay_months": 3,
     }
 
 
@@ -149,8 +150,9 @@ def test_finra_strong_buy_uses_yoy_as_independent_core_condition():
         "buy_warning_yoy": -25,
         "buy_strong_yoy": -30,
         "balance_drawdown_alert_levels": [-20, -25, -30],
-        "sell_warning_relative_drop": -10,
-        "sell_strong_relative_drop": -15,
+        "sell_warning_yoy_drop_points": 10,
+        "sell_strong_yoy_drop_points": 15,
+        "sell_delay_months": 3,
     }
     result = assess_finra(_monthly(values), cfg)
     assert result.state.startswith("BUY_STRONG_MINUS_30")
@@ -169,65 +171,117 @@ def test_finra_opportunity_at_minus_25_without_balance_or_flattening_and():
         "buy_warning_yoy": -25,
         "buy_strong_yoy": -30,
         "balance_drawdown_alert_levels": [-20, -25, -30],
-        "sell_warning_relative_drop": -10,
-        "sell_strong_relative_drop": -15,
+        "sell_warning_yoy_drop_points": 10,
+        "sell_strong_yoy_drop_points": 15,
+        "sell_delay_months": 3,
     }
     result = assess_finra(_monthly(values), cfg)
     assert result.state.startswith("BUY_OPPORTUNITY_MINUS_25")
     assert result.signal == "약한 매수"
 
 
-def test_finra_sell_waits_for_yoy_to_cross_below_50_after_15pct_drop():
+def test_finra_strong_sell_waits_for_yoy_to_cross_below_50():
     values = [100.0] * 48
     values[35] = 100
     values[47] = 170  # current YoY +70%; peak
-    # Next month is still >50 but more than 15% below the +70 peak.
-    values.append(158)  # versus prior-year 100 => +58%; relative peak drop -17.1%
+    # Next month remains >50 but is 16 percentage points below the +70 peak.
+    values.append(154)  # versus prior-year 100 => +54%; 16%p below peak
     cfg = {
         "overheat_yoy": 50,
         "lookback_months": 48,
         "buy_warning_yoy": -25,
         "buy_strong_yoy": -30,
         "balance_drawdown_alert_levels": [-20, -25, -30],
-        "sell_warning_relative_drop": -10,
-        "sell_strong_relative_drop": -15,
+        "sell_warning_yoy_drop_points": 10,
+        "sell_strong_yoy_drop_points": 15,
+        "sell_delay_months": 3,
     }
-    result = assess_finra(_monthly(values), cfg)
+    series = _monthly(values)
+    result = assess_finra(series, cfg, as_of=series.index[-1])
     assert result.state == "WAIT_FOR_YOY_BELOW_50"
-    assert result.signal == "강한 매도"
+    assert result.signal == "강한 매도 / YoY +50% 하회 대기"
 
 
-def test_finra_minus_10_relative_drop_is_weak_sell():
+def test_finra_10_percentage_point_drop_is_weak_sell():
     values = [100.0] * 48
     values[47] = 170
-    values.append(163)  # +63%, relative peak drop exactly -10%.
+    values.append(160)  # +60%, exactly 10%p below the +70% peak.
     result = assess_finra(_monthly(values), _finra_cfg())
     assert result.state == "SELL_WARNING_DROP_10"
     assert result.signal == "약한 매도"
 
 
+@pytest.mark.parametrize(
+    ("current_yoy", "expected_signal"),
+    [
+        (45, "평시 매수"),  # 50 -> 45 is only a 5%p decline.
+        (40, "약한 매도"),  # 50 -> 40 is a 10%p decline.
+        (35, "강한 매도 / 3개월 후 매도"),  # 50 -> 35 is a 15%p decline.
+    ],
+)
+def test_finra_sell_thresholds_are_yoy_percentage_points(current_yoy, expected_signal):
+    values = [100.0] * 48
+    values[47] = 150  # YoY peak +50%.
+    values.append(100 * (1 + current_yoy / 100))
+    series = _monthly(values)
+
+    result = assess_finra(series, _finra_cfg(), as_of=series.index[-1])
+
+    assert result.payload["yoy_drop_points"] == 50 - current_yoy
+    assert result.signal == expected_signal
+
+
 def test_finra_sell_schedules_then_alerts_in_target_month():
     values = [100.0] * 48
     values[47] = 170
-    values.append(150)  # YoY +50%, more than 20% below the +70% peak.
+    values.append(150)  # YoY +50%, 20%p below the +70% peak.
     cfg = {
         "overheat_yoy": 50,
         "lookback_months": 48,
         "buy_warning_yoy": -25,
         "buy_strong_yoy": -30,
         "balance_drawdown_alert_levels": [-20, -25, -30],
-        "sell_warning_relative_drop": -10,
-        "sell_strong_relative_drop": -15,
+        "sell_warning_yoy_drop_points": 10,
+        "sell_strong_yoy_drop_points": 15,
+        "sell_delay_months": 3,
     }
     series = _monthly(values)
     peak_month = series.index[-2]
     target_month = peak_month + pd.DateOffset(months=3)
-    scheduled = assess_finra(series, cfg, as_of=peak_month + pd.DateOffset(months=1))
+    scheduled = assess_finra(series, cfg, as_of=series.index[-1])
     due = assess_finra(series, cfg, as_of=target_month)
     assert scheduled.state.startswith("SELL_SCHEDULED_")
     assert scheduled.payload["sell_due"] is False
+    assert scheduled.payload["sell_reference_month"] == peak_month.strftime("%Y-%m")
+    assert scheduled.signal == "강한 매도 / 3개월 후 매도"
     assert due.state.startswith("SELL_DUE_")
     assert due.payload["sell_due"] is True
+    assert due.signal == "강한 매도 / 당월 매도 필요"
+
+
+@pytest.mark.parametrize(
+    ("current_yoy", "drop_ok"),
+    [(51, False), (45, True)],
+)
+def test_korea_sell_threshold_is_15_yoy_percentage_points(current_yoy, drop_ok):
+    values = [100.0] * 48
+    values[47] = 160  # YoY peak +60%.
+    values.append(100 * (1 + current_yoy / 100))
+    cfg = {
+        "overheat_yoy": 60,
+        "lookback_months": 48,
+        "buy_warning_yoy": -25,
+        "buy_strong_yoy": -30,
+        "balance_drawdown_min": -30,
+        "sell_yoy_drop_points": 15,
+        "prior_crash_cutoff": -45,
+        "prior_crash_lookback_months": 18,
+    }
+
+    result = assess_korea(_monthly(values), {}, cfg, {})
+
+    assert result.payload["yoy_drop_points"] == 60 - current_yoy
+    assert result.payload["sell_yoy_drop_points_ok"] is drop_ok
 
 
 def test_crypto_buy_requires_time_price_and_two_derivatives():
@@ -398,7 +452,7 @@ def test_korea_stock_sell_auxiliary_is_ma120_or_credit_top_10pct():
         "buy_warning_yoy": -25,
         "buy_strong_yoy": -30,
         "balance_drawdown_min": -30,
-        "sell_relative_drop": -15,
+        "sell_yoy_drop_points": 15,
         "prior_crash_cutoff": -45,
         "prior_crash_lookback_months": 18,
     }

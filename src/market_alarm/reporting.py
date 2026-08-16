@@ -31,20 +31,25 @@ def render_finra(a: Assessment, stocks: dict[str, dict[str, Any]] | None = None)
         lines += [
             f"선행 최고 YoY: {fmt_pct(p.get('peak_yoy'))} ({p.get('peak_yoy_month', 'N/A')})",
             f"고점 대비 절대잔고: {fmt_pct(p.get('balance_drawdown'))}",
-            f"YoY 정점 대비 상대하락: {fmt_pct(p.get('yoy_relative_drop'))}",
-            f"약한 매도 기준 {fmt_pct(p.get('sell_warning_relative_drop'))}: "
-            f"{'달성' if _at_or_below(p.get('yoy_relative_drop'), p.get('sell_warning_relative_drop')) else '미달성'}",
-            f"강한 매도 기준 {fmt_pct(p.get('sell_strong_relative_drop'))}: "
-            f"{'달성' if _at_or_below(p.get('yoy_relative_drop'), p.get('sell_strong_relative_drop')) else '미달성'}",
+            f"YoY 정점 대비 하락폭: {_fmt_points(p.get('yoy_drop_points'))}",
+            f"약한 매도 기준 {_fmt_points(p.get('sell_warning_yoy_drop_points'))} 이상: "
+            f"{'달성' if _at_or_above(p.get('yoy_drop_points'), p.get('sell_warning_yoy_drop_points')) else '미달성'}",
+            f"강한 매도 기준 {_fmt_points(p.get('sell_strong_yoy_drop_points'))} 이상: "
+            f"{'달성' if _at_or_above(p.get('yoy_drop_points'), p.get('sell_strong_yoy_drop_points')) else '미달성'}",
             f"3개월 하락 둔화: {'달성' if p.get('flattening') else '미달성'}",
         ]
     if p.get("balance_drawdown_message"):
         lines.append(f"절대잔고 추가경고: {p['balance_drawdown_message']}")
     if p.get("sell_target_month"):
+        sell_guidance = (
+            "당월 매도 필요"
+            if p.get("sell_due")
+            else f"{p.get('sell_delay_months', 3)}개월 후 매도"
+        )
         lines += [
             f"매도 기준: {p.get('sell_reference_kind')} {p.get('sell_reference_month')}",
             f"매도 목표월: {p.get('sell_target_month')}",
-            f"목표월 도달: {'예·실행 알람' if p.get('sell_due') else '아니오·예약만 안내'}",
+            f"매도 안내: {sell_guidance}",
         ]
     if stocks:
         lines.append("")
@@ -77,7 +82,7 @@ def render_korea(a: Assessment) -> str:
         buy_yoy = p.get("buy_yoy_threshold", -25)
         crash_cutoff = p.get("prior_crash_cutoff", -45)
         crash_months = p.get("prior_crash_lookback_months", 18)
-        sell_drop = p.get("sell_relative_drop_threshold", -15)
+        sell_drop_points = p.get("sell_yoy_drop_points_threshold", 15)
         balance_limit = p.get("balance_drawdown_threshold", -30)
         first_month = p.get("first_balance_decrease_month")
         lines += [
@@ -93,21 +98,22 @@ def render_korea(a: Assessment) -> str:
             f"{_ok(p.get('buy_yoy_ok'))}",
             "",
             f"[매도조건] {crash_months}개월 내 {fmt_pct(crash_cutoff)} 이상 붕괴 없음 + "
-            f"전고점 YoY {fmt_pct(overheat_yoy)} 이상 + 고점 이후 낙폭 {fmt_pct(sell_drop)} + "
+            f"전고점 YoY {fmt_pct(overheat_yoy)} 이상 + 고점 이후 YoY {_fmt_points(sell_drop_points)} 하락 + "
             f"신용공여 절댓값 최초 감소전환: {_ok(p.get('market_sell_all_ok'))}",
             f" · {crash_months}개월 내 {fmt_pct(crash_cutoff)} 이상 붕괴 없음: "
             f"{_ok(p.get('no_prior_crash_ok'))}",
             f" · 전고점 YoY {fmt_pct(overheat_yoy)} 이상 ({fmt_pct(p.get('peak_yoy'))}): "
             f"{_ok(p.get('peak_yoy_overheat_ok'))}",
-            f" · 고점 이후 낙폭 {fmt_pct(sell_drop)} ({fmt_pct(p.get('yoy_relative_drop'))}): "
-            f"{_ok(p.get('sell_relative_drop_ok'))}",
+            f" · 고점 이후 YoY 하락폭 {_fmt_points(sell_drop_points)} 이상 "
+            f"(현재 {_fmt_points(p.get('yoy_drop_points'))}): "
+            f"{_ok(p.get('sell_yoy_drop_points_ok'))}",
             f" · 신용공여 절댓값 전월 대비 최초 감소전환"
             f"{f' ({first_month})' if first_month else ''}: {_ok(p.get('first_decrease_ok'))}",
             "",
             f"고점 대비 잔고: {fmt_pct(p.get('balance_drawdown'))}",
             f"[매수조건] 신용공여 잔고 절댓값 전고점 대비 {fmt_pct(balance_limit)} 이하: "
             f"{_ok(p.get('market_buy_balance_ok'))}",
-            f"YoY 정점 대비 상대하락: {fmt_pct(p.get('yoy_relative_drop'))}",
+            f"YoY 정점 대비 하락폭: {_fmt_points(p.get('yoy_drop_points'))}",
         ]
     for symbol, snap in p.get("stocks", {}).items():
         lines += [
@@ -305,6 +311,20 @@ def _at_or_below(value: Any, threshold: Any) -> bool:
         return float(value) <= float(threshold)
     except (TypeError, ValueError):
         return False
+
+
+def _at_or_above(value: Any, threshold: Any) -> bool:
+    try:
+        return float(value) >= float(threshold)
+    except (TypeError, ValueError):
+        return False
+
+
+def _fmt_points(value: Any) -> str:
+    try:
+        return f"{float(value):.1f}%p"
+    except (TypeError, ValueError):
+        return "N/A"
 
 
 def _flattening_line(payload: dict[str, Any]) -> str:
